@@ -26,6 +26,6 @@ python app.py
 - Drag and drop a folder onto the window to load images.
 - Page size options: A4 fit, A4 no-upscale (shrink only), or original image size.
 - Preview shows the currently selected image.
-- On launch, the app checks GitHub Releases for updates (packaged exe only).
+- On launch, the app checks GitHub Releases for updates (packaged installer only).
 - Progress shows the current file while building the PDF.
 - Output folder is fixed by default and can be disabled in Settings; if disabled, PDF is created inside the image folder.

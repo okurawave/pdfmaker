@@ -33,7 +33,7 @@ A lightweight Windows desktop GUI app (Python + Tkinter) that merges image files
 - Generate a single PDF with one image per page.
 - Fit image to page while preserving aspect ratio.
 - Provide progress feedback during generation with current file.
-- On launch, check for updates and prompt user to update if available.
+- On launch, check for updates and prompt user to update via installer if available.
 
 ## Supported Formats
 - Input images: .jpg, .jpeg, .png, .bmp, .gif (first frame only).
@@ -60,7 +60,7 @@ A lightweight Windows desktop GUI app (Python + Tkinter) that merges image files
 - Provide a preview pane for the selected image.
 - Disable "Create PDF" until a valid folder and at least one image are selected.
 - Show a clear success message with the output path.
-- When an update is available, ask user to update and perform the update automatically on confirmation.
+- When an update is available, ask user to update and run the installer automatically on confirmation.
 
 ## Open Questions
 - None.

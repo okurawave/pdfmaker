@@ -20,9 +20,9 @@ import img2pdf
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
-UPDATE_ASSET_NAME = "pdfmaker.exe"
+UPDATE_ASSET_NAME = "pdfmaker-setup.exe"
 
 
 class App:
@@ -390,7 +390,7 @@ class App:
             f.write("@echo off\n")
             f.write("setlocal enabledelayedexpansion\n")
             f.write(f"set TARGET=\"{target_exe}\"\n")
-            f.write(f"set SOURCE=\"{temp_path}\"\n")
+            f.write(f"set INSTALLER=\"{temp_path}\"\n")
             f.write(f"set PID={pid}\n")
             f.write(":waitloop\n")
             f.write("tasklist /FI \"PID eq %PID%\" | find \"%PID%\" >nul\n")
@@ -398,8 +398,10 @@ class App:
             f.write("  timeout /t 1 /nobreak >nul\n")
             f.write("  goto waitloop\n")
             f.write(")\n")
-            f.write("copy /Y %SOURCE% %TARGET% >nul\n")
+            f.write("start /wait \"\" %INSTALLER% /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER\n")
+            f.write("del /f /q %INSTALLER%\n")
             f.write("start \"\" %TARGET%\n")
+            f.write("del /f /q \"%~f0\"\n")
 
         try:
             subprocess.Popen(
