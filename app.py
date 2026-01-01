@@ -1,7 +1,12 @@
+import json
 import os
+import subprocess
+import sys
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from urllib.request import Request, urlopen
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -9,12 +14,15 @@ except Exception:
     DND_FILES = None
     TkinterDnD = None
 
-from PIL import Image
+from PIL import Image, ImageTk
 import img2pdf
 
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
+APP_VERSION = "0.1.1"
+UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
+UPDATE_ASSET_NAME = "pdfmaker.exe"
 
 
 class App:
@@ -27,11 +35,14 @@ class App:
         self.folder_path = tk.StringVar()
         self.output_path = tk.StringVar()
         self.status_text = tk.StringVar(value="Select a folder to begin.")
+        self.page_mode = tk.StringVar(value="A4 (fit)")
 
         self.images = []
+        self.preview_image = None
 
         self._build_ui()
         self._setup_dnd()
+        self.root.after(600, self.start_update_check)
 
     def _build_ui(self) -> None:
         container = ttk.Frame(self.root, padding=12)
@@ -41,6 +52,8 @@ class App:
         self.root.rowconfigure(0, weight=1)
         container.columnconfigure(1, weight=1)
         container.rowconfigure(4, weight=1)
+        container.rowconfigure(5, weight=0)
+        container.rowconfigure(6, weight=0)
 
         title = ttk.Label(container, text="Image Folder to PDF", font=("Segoe UI", 14, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w")
@@ -63,24 +76,44 @@ class App:
         output_button = ttk.Button(container, text="Browse", command=self.select_output)
         output_button.grid(row=2, column=2, sticky="ew", padx=(8, 0), pady=4)
 
+        page_label = ttk.Label(container, text="Page size")
+        page_label.grid(row=3, column=0, sticky="w", pady=(4, 6))
+
+        page_mode = ttk.Combobox(
+            container,
+            textvariable=self.page_mode,
+            state="readonly",
+            values=["A4 (fit)", "A4 (no upscale)", "Original size"],
+        )
+        page_mode.grid(row=3, column=1, sticky="w", pady=(4, 6))
+
         info = ttk.Label(
             container,
             text="Tip: Drag and drop a folder onto this window.",
             foreground="#555555",
         )
-        info.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 6))
+        info.grid(row=3, column=2, sticky="e", pady=(4, 6))
 
         list_frame = ttk.Frame(container)
-        list_frame.grid(row=4, column=0, columnspan=3, sticky="nsew")
+        list_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
 
         self.listbox = tk.Listbox(list_frame, height=12)
         self.listbox.grid(row=0, column=0, sticky="nsew")
+        self.listbox.bind("<<ListboxSelect>>", self.on_select_image)
 
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.listbox.configure(yscrollcommand=scrollbar.set)
+
+        preview_frame = ttk.Labelframe(container, text="Preview")
+        preview_frame.grid(row=4, column=2, sticky="nsew", padx=(8, 0))
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+
+        self.preview_label = ttk.Label(preview_frame, text="No image selected", anchor="center")
+        self.preview_label.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
 
         self.progress = ttk.Progressbar(container, mode="indeterminate")
         self.progress.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 2))
@@ -159,6 +192,12 @@ class App:
         self.listbox.delete(0, tk.END)
         for path in self.images:
             self.listbox.insert(tk.END, os.path.basename(path))
+        if self.images:
+            self.listbox.selection_set(0)
+            self.on_select_image()
+        else:
+            self.preview_label.configure(text="No image selected", image="")
+            self.preview_image = None
 
     def update_status(self) -> None:
         if not self.images:
@@ -167,6 +206,36 @@ class App:
         else:
             self.status_text.set(f"{len(self.images)} image(s) ready.")
             self.create_button.state(["!disabled"])
+
+    def on_select_image(self, event: tk.Event | None = None) -> None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        path = self.images[selection[0]]
+        self.update_preview(path)
+
+    def update_preview(self, path: str) -> None:
+        try:
+            with Image.open(path) as img:
+                img_copy = img.copy()
+        except Exception:
+            self.preview_label.configure(text="Preview unavailable", image="")
+            self.preview_image = None
+            return
+
+        max_width = 280
+        max_height = 360
+        img_copy.thumbnail((max_width, max_height))
+        self.preview_image = ImageTk.PhotoImage(img_copy)
+        self.preview_label.configure(image=self.preview_image, text="")
+
+    def get_layout_fun(self):
+        mode = self.page_mode.get()
+        if mode == "A4 (no upscale)":
+            return img2pdf.get_layout_fun(A4_SIZE_PT, fit=img2pdf.FitMode.shrink)
+        if mode == "Original size":
+            return img2pdf.get_layout_fun()
+        return img2pdf.get_layout_fun(A4_SIZE_PT, fit=img2pdf.FitMode.into)
 
     def create_pdf(self) -> None:
         if not self.images:
@@ -208,7 +277,7 @@ class App:
             return
 
         try:
-            layout_fun = img2pdf.get_layout_fun(A4_SIZE_PT)
+            layout_fun = self.get_layout_fun()
             pdf_bytes = img2pdf.convert(valid_images, layout_fun=layout_fun)
             with open(output, "wb") as f:
                 f.write(pdf_bytes)
@@ -217,6 +286,95 @@ class App:
             return
 
         self.root.after(0, lambda: self._on_generation_success(output, warnings))
+
+    def start_update_check(self) -> None:
+        thread = threading.Thread(target=self._check_update_thread, daemon=True)
+        thread.start()
+
+    def _check_update_thread(self) -> None:
+        try:
+            latest = fetch_latest_release()
+        except Exception:
+            return
+
+        if not latest:
+            return
+
+        latest_version = latest.get("tag_name", "").lstrip("v")
+        if not is_version_newer(latest_version, APP_VERSION):
+            return
+
+        self.root.after(0, lambda: self._prompt_update(latest))
+
+    def _prompt_update(self, release_info: dict) -> None:
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(
+                "Update Available",
+                "A new version is available. Please download the latest release.",
+            )
+            return
+
+        if messagebox.askyesno(
+            "Update Available",
+            "A new version is available. Update now?",
+        ):
+            self.progress.start(10)
+            self.status_text.set("Downloading update...")
+            thread = threading.Thread(
+                target=self._download_update_thread, args=(release_info,), daemon=True
+            )
+            thread.start()
+
+    def _download_update_thread(self, release_info: dict) -> None:
+        try:
+            asset = find_asset(release_info, UPDATE_ASSET_NAME)
+            if not asset:
+                raise RuntimeError("Update asset not found.")
+            download_url = asset["browser_download_url"]
+            temp_path = download_file(download_url)
+            self.root.after(0, lambda: self._apply_update(temp_path))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_update_failed(str(exc)))
+
+    def _apply_update(self, temp_path: str) -> None:
+        if not getattr(sys, "frozen", False):
+            self._on_update_failed("Auto-update is only available in the packaged app.")
+            return
+
+        target_exe = sys.executable
+        updater_path = os.path.join(tempfile.gettempdir(), "pdfmaker_update.bat")
+        pid = os.getpid()
+
+        with open(updater_path, "w", encoding="ascii") as f:
+            f.write("@echo off\n")
+            f.write("setlocal enabledelayedexpansion\n")
+            f.write(f"set TARGET=\"{target_exe}\"\n")
+            f.write(f"set SOURCE=\"{temp_path}\"\n")
+            f.write(f"set PID={pid}\n")
+            f.write(":waitloop\n")
+            f.write("tasklist /FI \"PID eq %PID%\" | find \"%PID%\" >nul\n")
+            f.write("if %errorlevel%==0 (\n")
+            f.write("  timeout /t 1 /nobreak >nul\n")
+            f.write("  goto waitloop\n")
+            f.write(")\n")
+            f.write("copy /Y %SOURCE% %TARGET% >nul\n")
+            f.write("start \"\" %TARGET%\n")
+
+        try:
+            subprocess.Popen(
+                ["cmd", "/c", updater_path],
+                creationflags=0x08000000,
+                close_fds=True,
+            )
+        except Exception:
+            pass
+
+        self.root.after(0, self.root.destroy)
+
+    def _on_update_failed(self, message: str) -> None:
+        self.progress.stop()
+        self.update_status()
+        messagebox.showerror("Update Failed", message)
 
     def _on_generation_failed(self, message: str) -> None:
         self.progress.stop()
@@ -238,7 +396,53 @@ class App:
         messagebox.showinfo("Done", f"PDF created: {output}{warning_text}")
 
 
+def fetch_latest_release() -> dict:
+    req = Request(UPDATE_API_URL, headers={"User-Agent": "pdfmaker"})
+    with urlopen(req, timeout=6) as response:
+        payload = response.read().decode("utf-8")
+    return json.loads(payload)
+
+
+def parse_version(value: str) -> tuple:
+    parts = []
+    for piece in value.split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts)
+
+
+def is_version_newer(candidate: str, current: str) -> bool:
+    if not candidate:
+        return False
+    return parse_version(candidate) > parse_version(current)
+
+
+def find_asset(release_info: dict, name: str) -> dict | None:
+    for asset in release_info.get("assets", []):
+        if asset.get("name") == name:
+            return asset
+    return None
+
+
+def download_file(url: str) -> str:
+    req = Request(url, headers={"User-Agent": "pdfmaker"})
+    with urlopen(req, timeout=30) as response:
+        data = response.read()
+    fd, temp_path = tempfile.mkstemp(prefix="pdfmaker_update_", suffix=".exe")
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    return temp_path
+
+
 def main() -> None:
+    try:
+        import ctypes
+
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
     if TkinterDnD:
         root = TkinterDnD.Tk()
     else:
