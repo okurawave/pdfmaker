@@ -16,6 +16,10 @@ pip install -r requirements.txt
 python app.py
 ```
 
+## Installer
+- GitHub Releases provides `pdfmaker-setup.exe` (Inno Setup).
+- Default install location: `%LOCALAPPDATA%\pdfmaker`.
+
 ## Notes
 - Default order: filename order (case-insensitive).
 - Supported image types: jpg, jpeg, png, bmp, gif (first frame only).
@@ -23,3 +27,5 @@ python app.py
 - Page size options: A4 fit, A4 no-upscale (shrink only), or original image size.
 - Preview shows the currently selected image.
 - On launch, the app checks GitHub Releases for updates (packaged exe only).
+- Progress shows the current file while building the PDF.
+- Output folder can be fixed in Settings, otherwise PDF is created inside the image folder.

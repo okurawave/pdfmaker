@@ -25,12 +25,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+          choco install innosetup -y
 
       - name: Build executable
         run: |
           pyinstaller --onefile --windowed --collect-all tkinterdnd2 --name pdfmaker app.py
 
+      - name: Build installer
+        run: |
+          "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer.iss
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/pdfmaker.exe
+          files: |
+            dist/pdfmaker.exe
+            dist/pdfmaker-setup.exe
