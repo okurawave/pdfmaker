@@ -33,7 +33,7 @@ jobs:
 
       - name: Build installer
         run: |
-          "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer.iss
+          & "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer.iss
 
       - name: Create release
         uses: softprops/action-gh-release@v2
