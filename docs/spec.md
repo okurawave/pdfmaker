@@ -29,7 +29,7 @@ A lightweight Windows desktop GUI app (Python + Tkinter) that merges image files
 - Default ordering: sort by filename (lexicographic, case-insensitive).
 - Allow manual reordering (nice-to-have, optional).
 - Allow user to set output PDF name and destination.
-- Allow user to fix the output folder in Settings; if unset, output in the input folder.
+- Default to fixed output folder and allow user to disable it; if disabled, output in the input folder.
 - Generate a single PDF with one image per page.
 - Fit image to page while preserving aspect ratio.
 - Provide progress feedback during generation with current file.

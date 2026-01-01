@@ -20,7 +20,7 @@ import img2pdf
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.4"
 UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
 UPDATE_ASSET_NAME = "pdfmaker.exe"
 
@@ -37,8 +37,8 @@ class App:
         self.status_text = tk.StringVar(value="Select a folder to begin.")
         self.progress_text = tk.StringVar(value="")
         self.page_mode = tk.StringVar(value="A4 (fit)")
-        self.use_fixed_output = tk.BooleanVar(value=False)
-        self.fixed_output_dir = tk.StringVar(value="")
+        self.use_fixed_output = tk.BooleanVar(value=True)
+        self.fixed_output_dir = tk.StringVar(value=default_output_dir())
 
         self.images = []
         self.preview_image = None
@@ -279,6 +279,11 @@ class App:
             output += ".pdf"
             self.output_path.set(output)
 
+        try:
+            os.makedirs(os.path.dirname(output), exist_ok=True)
+        except Exception:
+            pass
+
         self.create_button.state(["disabled"])
         self.progress.stop()
         self.progress.configure(value=0, maximum=len(self.images))
@@ -492,14 +497,19 @@ class App:
     def load_settings(self) -> None:
         path = settings_path()
         if not os.path.exists(path):
+            self.use_fixed_output.set(True)
+            self.fixed_output_dir.set(default_output_dir())
             return
         try:
             with open(path, "r", encoding="ascii") as f:
                 data = json.load(f)
         except Exception:
             return
-        self.use_fixed_output.set(bool(data.get("use_fixed_output", False)))
-        self.fixed_output_dir.set(str(data.get("fixed_output_dir", "")))
+        self.use_fixed_output.set(bool(data.get("use_fixed_output", True)))
+        fixed_dir = str(data.get("fixed_output_dir", "")).strip()
+        if not fixed_dir:
+            fixed_dir = default_output_dir()
+        self.fixed_output_dir.set(fixed_dir)
 
     def save_settings(self) -> None:
         path = settings_path()
@@ -555,6 +565,11 @@ def download_file(url: str) -> str:
 def settings_path() -> str:
     base = os.getenv("APPDATA") or os.path.expanduser("~")
     return os.path.join(base, "pdfmaker", "settings.json")
+
+
+def default_output_dir() -> str:
+    base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "pdfmaker", "output")
 
 
 def main() -> None:

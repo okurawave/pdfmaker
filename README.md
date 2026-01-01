@@ -28,4 +28,4 @@ python app.py
 - Preview shows the currently selected image.
 - On launch, the app checks GitHub Releases for updates (packaged exe only).
 - Progress shows the current file while building the PDF.
-- Output folder can be fixed in Settings, otherwise PDF is created inside the image folder.
+- Output folder is fixed by default and can be disabled in Settings; if disabled, PDF is created inside the image folder.
