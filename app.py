@@ -21,7 +21,7 @@ import img2pdf
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
-APP_VERSION = "0.1.7"
+APP_VERSION = "0.1.8"
 UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
 UPDATE_ASSET_NAME = "pdfmaker-setup.exe"
 
@@ -40,9 +40,11 @@ class App:
         self.page_mode = tk.StringVar(value="A4 (fit)")
         self.use_fixed_output = tk.BooleanVar(value=True)
         self.fixed_output_dir = tk.StringVar(value=default_output_dir())
+        self.batch_mode = tk.BooleanVar(value=False)
 
         self.images = []
         self.display_names = []
+        self.batch_folders = []
         self.input_is_zip = False
         self.active_folder = ""
         self.temp_dir = None
@@ -117,14 +119,48 @@ class App:
         list_frame = ttk.Frame(container)
         list_frame.grid(row=4, column=0, columnspan=2, sticky="nsew")
         list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
+        list_frame.rowconfigure(1, weight=1)
+
+        controls_frame = ttk.Frame(list_frame)
+        controls_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        controls_frame.columnconfigure(0, weight=1)
+
+        batch_frame = ttk.Frame(controls_frame)
+        batch_frame.grid(row=0, column=0, sticky="w")
+
+        batch_check = ttk.Checkbutton(
+            batch_frame,
+            text="Batch mode",
+            variable=self.batch_mode,
+            command=self.on_mode_change,
+        )
+        batch_check.grid(row=0, column=0, sticky="w")
+
+        self.add_folder_button = ttk.Button(
+            batch_frame, text="Add Folder", command=self.add_batch_folder
+        )
+        self.add_folder_button.grid(row=0, column=1, padx=(8, 0))
+
+        self.clear_batch_button = ttk.Button(
+            batch_frame, text="Clear", command=self.clear_batch_folders
+        )
+        self.clear_batch_button.grid(row=0, column=2, padx=(6, 0))
+
+        reorder_frame = ttk.Frame(controls_frame)
+        reorder_frame.grid(row=0, column=1, sticky="e")
+
+        self.move_up_button = ttk.Button(reorder_frame, text="Up", command=lambda: self.move_selected(-1))
+        self.move_up_button.grid(row=0, column=0, padx=(0, 6))
+
+        self.move_down_button = ttk.Button(reorder_frame, text="Down", command=lambda: self.move_selected(1))
+        self.move_down_button.grid(row=0, column=1)
 
         self.listbox = tk.Listbox(list_frame, height=12)
-        self.listbox.grid(row=0, column=0, sticky="nsew")
+        self.listbox.grid(row=1, column=0, sticky="nsew")
         self.listbox.bind("<<ListboxSelect>>", self.on_select_image)
 
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
+        scrollbar.grid(row=1, column=1, sticky="ns")
         self.listbox.configure(yscrollcommand=scrollbar.set)
 
         preview_frame = ttk.Labelframe(container, text="Preview")
@@ -151,6 +187,7 @@ class App:
 
         version_label = ttk.Label(container, text=f"v{APP_VERSION}", foreground="#666666")
         version_label.grid(row=9, column=2, sticky="e", pady=(6, 0))
+        self.on_mode_change()
 
     def _setup_dnd(self) -> None:
         if not TkinterDnD or not DND_FILES:
@@ -164,13 +201,19 @@ class App:
     def select_folder(self) -> None:
         path = filedialog.askdirectory()
         if path:
-            self.set_input(path)
+            if self.batch_mode.get():
+                self.add_batch_folder(path)
+            else:
+                self.set_input(path)
 
     def select_zip(self) -> None:
         path = filedialog.askopenfilename(
             filetypes=[("Zip files", "*.zip")],
         )
         if path:
+            if self.batch_mode.get():
+                messagebox.showwarning("Batch Mode", "Zip input is not available in batch mode.")
+                return
             self.set_input(path)
 
     def select_output(self) -> None:
@@ -191,9 +234,19 @@ class App:
             paths = [data]
         if not paths:
             return
-        path = os.path.normpath(paths[0])
-        if os.path.isdir(path) or self._is_zip_file(path):
-            self.set_input(path)
+        norm_paths = [os.path.normpath(p) for p in paths]
+        folders = [p for p in norm_paths if os.path.isdir(p)]
+        zips = [p for p in norm_paths if self._is_zip_file(p)]
+        if self.batch_mode.get() or len(folders) > 1:
+            for folder in folders:
+                self.add_batch_folder(folder)
+            if zips:
+                messagebox.showwarning("Batch Mode", "Zip input is not available in batch mode.")
+            return
+        if folders:
+            self.set_input(folders[0])
+        elif zips:
+            self.set_input(zips[0])
 
     def _is_zip_file(self, path: str) -> bool:
         return os.path.isfile(path) and path.lower().endswith(".zip")
@@ -259,12 +312,12 @@ class App:
             output_dir = self._input_output_dir(input_path)
         self.output_path.set(os.path.join(output_dir, f"{base}.pdf"))
 
-    def load_images(self, folder: str, recursive: bool = False) -> None:
+    def collect_images(self, folder: str, recursive: bool = False) -> tuple[list, list]:
         try:
             entries = os.listdir(folder)
         except OSError as exc:
             messagebox.showerror("Error", f"Failed to read folder: {exc}")
-            return
+            return [], []
 
         images = []
         display_names = []
@@ -276,17 +329,25 @@ class App:
                         path = os.path.join(root, name)
                         images.append(path)
                         display_names.append(os.path.relpath(path, folder))
-            images, display_names = zip(*sorted(zip(images, display_names), key=lambda t: t[1].lower())) if images else ([], [])
+            if images:
+                images, display_names = zip(
+                    *sorted(zip(images, display_names), key=lambda t: t[1].lower())
+                )
         else:
             for name in entries:
                 ext = os.path.splitext(name)[1].lower()
                 if ext in SUPPORTED_EXTENSIONS:
                     images.append(os.path.join(folder, name))
                     display_names.append(name)
-            images, display_names = zip(*sorted(zip(images, display_names), key=lambda t: t[1].lower())) if images else ([], [])
+            if images:
+                images, display_names = zip(
+                    *sorted(zip(images, display_names), key=lambda t: t[1].lower())
+                )
 
-        images = list(images)
-        display_names = list(display_names)
+        return list(images) if images else [], list(display_names) if display_names else []
+
+    def load_images(self, folder: str, recursive: bool = False) -> None:
+        images, display_names = self.collect_images(folder, recursive=recursive)
         self.images = images
         self.display_names = display_names
         self.refresh_list()
@@ -294,9 +355,13 @@ class App:
 
     def refresh_list(self) -> None:
         self.listbox.delete(0, tk.END)
-        for name in self.display_names:
-            self.listbox.insert(tk.END, name)
-        if self.images:
+        if self.batch_mode.get():
+            for path in self.batch_folders:
+                self.listbox.insert(tk.END, path)
+        else:
+            for name in self.display_names:
+                self.listbox.insert(tk.END, name)
+        if not self.batch_mode.get() and self.images:
             self.listbox.selection_set(0)
             self.on_select_image()
         else:
@@ -304,14 +369,24 @@ class App:
             self.preview_image = None
 
     def update_status(self) -> None:
-        if not self.images:
-            self.status_text.set("No supported images found.")
-            self.create_button.state(["disabled"])
+        if self.batch_mode.get():
+            if not self.batch_folders:
+                self.status_text.set("No batch folders selected.")
+                self.create_button.state(["disabled"])
+            else:
+                self.status_text.set(f"{len(self.batch_folders)} folder(s) ready.")
+                self.create_button.state(["!disabled"])
         else:
-            self.status_text.set(f"{len(self.images)} image(s) ready.")
-            self.create_button.state(["!disabled"])
+            if not self.images:
+                self.status_text.set("No supported images found.")
+                self.create_button.state(["disabled"])
+            else:
+                self.status_text.set(f"{len(self.images)} image(s) ready.")
+                self.create_button.state(["!disabled"])
 
     def on_select_image(self, event: tk.Event | None = None) -> None:
+        if self.batch_mode.get():
+            return
         selection = self.listbox.curselection()
         if not selection:
             return
@@ -342,14 +417,26 @@ class App:
         return img2pdf.get_layout_fun(A4_SIZE_PT, fit=img2pdf.FitMode.into)
 
     def create_pdf(self) -> None:
-        if not self.images:
-            messagebox.showwarning("No Images", "No supported images found.")
-            return
-
         output = self.output_path.get().strip()
         if self.use_fixed_output.get() and not self.fixed_output_dir.get().strip():
             messagebox.showwarning("Output Folder", "Set a fixed output folder in Settings.")
             self.open_settings()
+            return
+        if self.batch_mode.get():
+            if not self.batch_folders:
+                messagebox.showwarning("No Folders", "No folders selected for batch.")
+                return
+            self.create_button.state(["disabled"])
+            self.progress.stop()
+            self.progress.configure(value=0, maximum=len(self.batch_folders))
+            self.status_text.set("Generating PDFs...")
+            self.progress_text.set("Preparing batch...")
+            thread = threading.Thread(target=self._generate_batch_thread, daemon=True)
+            thread.start()
+            return
+
+        if not self.images:
+            messagebox.showwarning("No Images", "No supported images found.")
             return
         if not output:
             self.select_output()
@@ -357,14 +444,9 @@ class App:
             if not output:
                 return
 
-        if not output.lower().endswith(".pdf"):
-            output += ".pdf"
-            self.output_path.set(output)
-
-        try:
-            os.makedirs(os.path.dirname(output), exist_ok=True)
-        except Exception:
-            pass
+        output = self._ensure_pdf_extension(output)
+        self.output_path.set(output)
+        self._ensure_output_dir(output)
 
         self.create_button.state(["disabled"])
         self.progress.stop()
@@ -376,11 +458,68 @@ class App:
         thread.start()
 
     def _generate_pdf_thread(self, output: str) -> None:
+        valid_images, warnings = self._validate_images(self.images)
+        if not valid_images:
+            self.root.after(0, lambda: self._on_generation_failed("No valid images found."))
+            return
+        if not self._write_pdf(output, valid_images):
+            return
+        self.root.after(0, lambda: self._on_generation_success(output, warnings))
+
+    def _generate_batch_thread(self) -> None:
+        results = []
+        total = len(self.batch_folders)
+        for index, folder in enumerate(self.batch_folders, start=1):
+            self.root.after(
+                0,
+                lambda i=index, t=total, f=folder: self._update_progress(
+                    i, t, f"Processing {i}/{t}: {os.path.basename(f)}"
+                ),
+            )
+            images, _ = self.collect_images(folder, recursive=False)
+            if not images:
+                results.append((folder, "No supported images found."))
+                continue
+            valid_images, warnings = self._validate_images(images)
+            if not valid_images:
+                results.append((folder, "No valid images found."))
+                continue
+
+            output = self._output_path_for_input(folder)
+            output = self._ensure_pdf_extension(output)
+            self._ensure_output_dir(output)
+            if not self._write_pdf(output, valid_images):
+                results.append((folder, "Failed to write PDF."))
+                continue
+            if warnings:
+                results.append((folder, f"Skipped {len(warnings)} unreadable file(s)."))
+            else:
+                results.append((folder, "OK"))
+
+        self.root.after(0, lambda: self._on_batch_complete(results))
+
+    def _output_path_for_input(self, input_path: str) -> str:
+        base = self._input_base_name(input_path)
+        if self.use_fixed_output.get() and self.fixed_output_dir.get().strip():
+            output_dir = self.fixed_output_dir.get().strip()
+        else:
+            output_dir = self._input_output_dir(input_path)
+        return os.path.join(output_dir, f"{base}.pdf")
+
+    def _ensure_pdf_extension(self, output: str) -> str:
+        return output if output.lower().endswith(".pdf") else output + ".pdf"
+
+    def _ensure_output_dir(self, output: str) -> None:
+        try:
+            os.makedirs(os.path.dirname(output), exist_ok=True)
+        except Exception:
+            pass
+
+    def _validate_images(self, images: list) -> tuple[list, list]:
         warnings = []
         valid_images = []
-        total = len(self.images)
-
-        for index, path in enumerate(self.images, start=1):
+        total = len(images)
+        for index, path in enumerate(images, start=1):
             self.root.after(
                 0,
                 lambda i=index, p=path, t=total: self._update_progress(
@@ -393,22 +532,19 @@ class App:
                 valid_images.append(path)
             except Exception:
                 warnings.append(os.path.basename(path))
+        return valid_images, warnings
 
-        if not valid_images:
-            self.root.after(0, lambda: self._on_generation_failed("No valid images found."))
-            return
-
+    def _write_pdf(self, output: str, images: list) -> bool:
         try:
             layout_fun = self.get_layout_fun()
-            self.root.after(0, lambda: self._update_progress(total, total, "Generating PDF..."))
-            pdf_bytes = img2pdf.convert(valid_images, layout_fun=layout_fun)
+            self.root.after(0, lambda: self._update_progress(len(images), len(images), "Generating PDF..."))
+            pdf_bytes = img2pdf.convert(images, layout_fun=layout_fun)
             with open(output, "wb") as f:
                 f.write(pdf_bytes)
+            return True
         except Exception as exc:
             self.root.after(0, lambda: self._on_generation_failed(str(exc)))
-            return
-
-        self.root.after(0, lambda: self._on_generation_success(output, warnings))
+            return False
 
     def start_update_check(self) -> None:
         thread = threading.Thread(target=self._check_update_thread, daemon=True)
@@ -523,6 +659,17 @@ class App:
 
         messagebox.showinfo("Done", f"PDF created: {output}{warning_text}")
 
+    def _on_batch_complete(self, results: list) -> None:
+        self.progress.stop()
+        self.progress_text.set("")
+        self.update_status()
+
+        ok = [r for r in results if r[1] == "OK"]
+        errors = [r for r in results if r[1] != "OK"]
+        lines = [f"{os.path.basename(path)}: {status}" for path, status in results]
+        summary = f"Completed {len(ok)}/{len(results)} folder(s)."
+        messagebox.showinfo("Batch Done", summary + "\n\n" + "\n".join(lines))
+
     def _update_progress(self, value: int, total: int, message: str) -> None:
         self.progress.configure(maximum=max(total, 1))
         self.progress.configure(value=value)
@@ -574,7 +721,7 @@ class App:
         dialog.destroy()
 
     def update_output_controls(self) -> None:
-        if self.use_fixed_output.get():
+        if self.use_fixed_output.get() or self.batch_mode.get():
             self.output_entry.state(["disabled"])
             self.output_button.state(["disabled"])
         else:
@@ -611,6 +758,52 @@ class App:
     def on_close(self) -> None:
         self._clear_temp_dir()
         self.root.destroy()
+
+    def on_mode_change(self) -> None:
+        if self.batch_mode.get():
+            self.preview_label.configure(text="Batch mode enabled", image="")
+            self.preview_image = None
+        self.refresh_list()
+        self.update_output_controls()
+        self.update_status()
+
+    def add_batch_folder(self, path: str | None = None) -> None:
+        if path is None:
+            path = filedialog.askdirectory()
+        if not path:
+            return
+        if not os.path.isdir(path):
+            messagebox.showwarning("Input", "Please select a folder.")
+            return
+        if path not in self.batch_folders:
+            self.batch_folders.append(path)
+        self.refresh_list()
+        self.update_status()
+
+    def clear_batch_folders(self) -> None:
+        self.batch_folders = []
+        self.refresh_list()
+        self.update_status()
+
+    def move_selected(self, direction: int) -> None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        items = self.batch_folders if self.batch_mode.get() else self.images
+        names = None if self.batch_mode.get() else self.display_names
+        if not items:
+            return
+        new_index = index + direction
+        if new_index < 0 or new_index >= len(items):
+            return
+        items[index], items[new_index] = items[new_index], items[index]
+        if names is not None:
+            names[index], names[new_index] = names[new_index], names[index]
+        self.refresh_list()
+        self.listbox.selection_set(new_index)
+        if not self.batch_mode.get():
+            self.on_select_image()
 
     def check_updates_now(self) -> None:
         self.progress.start(10)
