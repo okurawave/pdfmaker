@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 import tkinter as tk
+import zipfile
 from tkinter import filedialog, messagebox, ttk
 from urllib.request import Request, urlopen
 
@@ -41,11 +42,16 @@ class App:
         self.fixed_output_dir = tk.StringVar(value=default_output_dir())
 
         self.images = []
+        self.display_names = []
+        self.input_is_zip = False
+        self.active_folder = ""
+        self.temp_dir = None
         self.preview_image = None
 
         self.load_settings()
         self._build_ui()
         self._setup_dnd()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(600, self.start_update_check)
 
     def _build_ui(self) -> None:
@@ -65,14 +71,21 @@ class App:
         settings_button = ttk.Button(container, text="Settings", command=self.open_settings)
         settings_button.grid(row=0, column=2, sticky="e")
 
-        folder_label = ttk.Label(container, text="Input folder")
+        folder_label = ttk.Label(container, text="Input folder or zip")
         folder_label.grid(row=1, column=0, sticky="w", pady=(12, 4))
 
         folder_entry = ttk.Entry(container, textvariable=self.folder_path, state="readonly")
         folder_entry.grid(row=1, column=1, sticky="ew", pady=(12, 4))
 
-        folder_button = ttk.Button(container, text="Select Folder", command=self.select_folder)
-        folder_button.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(12, 4))
+        input_button_frame = ttk.Frame(container)
+        input_button_frame.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(12, 4))
+        input_button_frame.columnconfigure(0, weight=1)
+
+        folder_button = ttk.Button(input_button_frame, text="Select Folder", command=self.select_folder)
+        folder_button.grid(row=0, column=0, sticky="ew")
+
+        zip_button = ttk.Button(input_button_frame, text="Select Zip", command=self.select_zip)
+        zip_button.grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
         output_label = ttk.Label(container, text="Output PDF")
         output_label.grid(row=2, column=0, sticky="w", pady=4)
@@ -96,7 +109,7 @@ class App:
 
         info = ttk.Label(
             container,
-            text="Tip: Drag and drop a folder onto this window.",
+            text="Tip: Drag and drop a folder or zip file.",
             foreground="#555555",
         )
         info.grid(row=3, column=2, sticky="e", pady=(4, 6))
@@ -148,7 +161,14 @@ class App:
     def select_folder(self) -> None:
         path = filedialog.askdirectory()
         if path:
-            self.set_folder(path)
+            self.set_input(path)
+
+    def select_zip(self) -> None:
+        path = filedialog.askopenfilename(
+            filetypes=[("Zip files", "*.zip")],
+        )
+        if path:
+            self.set_input(path)
 
     def select_output(self) -> None:
         initial = self.output_path.get().strip() or "output.pdf"
@@ -169,30 +189,74 @@ class App:
         if not paths:
             return
         path = os.path.normpath(paths[0])
-        if os.path.isdir(path):
-            self.set_folder(path)
+        if os.path.isdir(path) or self._is_zip_file(path):
+            self.set_input(path)
 
-    def set_folder(self, path: str) -> None:
+    def _is_zip_file(self, path: str) -> bool:
+        return os.path.isfile(path) and path.lower().endswith(".zip")
+
+    def _clear_temp_dir(self) -> None:
+        if self.temp_dir:
+            try:
+                self.temp_dir.cleanup()
+            except Exception:
+                pass
+            self.temp_dir = None
+
+    def set_input(self, path: str) -> None:
+        self._clear_temp_dir()
+        self.input_is_zip = False
+        self.active_folder = ""
+
+        if self._is_zip_file(path):
+            try:
+                temp_dir = tempfile.TemporaryDirectory(prefix="pdfmaker_zip_")
+                with zipfile.ZipFile(path, "r") as zf:
+                    zf.extractall(temp_dir.name)
+                self.temp_dir = temp_dir
+                self.input_is_zip = True
+                self.active_folder = temp_dir.name
+            except Exception as exc:
+                self._clear_temp_dir()
+                messagebox.showerror("Error", f"Failed to read zip file: {exc}")
+                return
+        elif os.path.isdir(path):
+            self.active_folder = path
+        else:
+            messagebox.showwarning("Input", "Please select a folder or a zip file.")
+            return
+
         self.folder_path.set(path)
-        self.load_images(path)
+        self.load_images(self.active_folder, recursive=self.input_is_zip)
         self.apply_output_path()
 
     def default_output_path(self, folder: str) -> str:
         base = os.path.basename(os.path.normpath(folder)) or "output"
         return os.path.join(folder, f"{base}.pdf")
 
+    def _input_base_name(self, path: str) -> str:
+        base = os.path.basename(os.path.normpath(path)) or "output"
+        if self._is_zip_file(path):
+            base = os.path.splitext(base)[0] or "output"
+        return base
+
+    def _input_output_dir(self, path: str) -> str:
+        if self._is_zip_file(path):
+            return os.path.dirname(path)
+        return path
+
     def apply_output_path(self) -> None:
-        folder = self.folder_path.get().strip()
-        if not folder:
+        input_path = self.folder_path.get().strip()
+        if not input_path:
             return
-        base = os.path.basename(os.path.normpath(folder)) or "output"
+        base = self._input_base_name(input_path)
         if self.use_fixed_output.get() and self.fixed_output_dir.get().strip():
             output_dir = self.fixed_output_dir.get().strip()
         else:
-            output_dir = folder
+            output_dir = self._input_output_dir(input_path)
         self.output_path.set(os.path.join(output_dir, f"{base}.pdf"))
 
-    def load_images(self, folder: str) -> None:
+    def load_images(self, folder: str, recursive: bool = False) -> None:
         try:
             entries = os.listdir(folder)
         except OSError as exc:
@@ -200,20 +264,35 @@ class App:
             return
 
         images = []
-        for name in entries:
-            ext = os.path.splitext(name)[1].lower()
-            if ext in SUPPORTED_EXTENSIONS:
-                images.append(os.path.join(folder, name))
+        display_names = []
+        if recursive:
+            for root, _, files in os.walk(folder):
+                for name in files:
+                    ext = os.path.splitext(name)[1].lower()
+                    if ext in SUPPORTED_EXTENSIONS:
+                        path = os.path.join(root, name)
+                        images.append(path)
+                        display_names.append(os.path.relpath(path, folder))
+            images, display_names = zip(*sorted(zip(images, display_names), key=lambda t: t[1].lower())) if images else ([], [])
+        else:
+            for name in entries:
+                ext = os.path.splitext(name)[1].lower()
+                if ext in SUPPORTED_EXTENSIONS:
+                    images.append(os.path.join(folder, name))
+                    display_names.append(name)
+            images, display_names = zip(*sorted(zip(images, display_names), key=lambda t: t[1].lower())) if images else ([], [])
 
-        images.sort(key=lambda p: os.path.basename(p).lower())
+        images = list(images)
+        display_names = list(display_names)
         self.images = images
+        self.display_names = display_names
         self.refresh_list()
         self.update_status()
 
     def refresh_list(self) -> None:
         self.listbox.delete(0, tk.END)
-        for path in self.images:
-            self.listbox.insert(tk.END, os.path.basename(path))
+        for name in self.display_names:
+            self.listbox.insert(tk.END, name)
         if self.images:
             self.listbox.selection_set(0)
             self.on_select_image()
@@ -522,6 +601,10 @@ class App:
         }
         with open(path, "w", encoding="ascii") as f:
             json.dump(data, f)
+
+    def on_close(self) -> None:
+        self._clear_temp_dir()
+        self.root.destroy()
 
 
 def fetch_latest_release() -> dict:
