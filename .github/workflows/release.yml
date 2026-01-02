@@ -19,6 +19,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Cache Chocolatey
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\ProgramData\chocolatey\lib
+            C:\ProgramData\chocolatey\bin
+          key: choco-${{ runner.os }}-innosetup
 
       - name: Install dependencies
         run: |
