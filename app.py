@@ -22,7 +22,7 @@ import img2pdf
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
-APP_VERSION = "0.1.9"
+APP_VERSION = "0.1.11"
 UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
 UPDATE_ASSET_NAME = "pdfmaker-setup.exe"
 FULLWIDTH_TO_ASCII = str.maketrans("０１２３４５６７８９", "0123456789")
@@ -632,6 +632,7 @@ class App:
             f.write(")\n")
             f.write("start /wait \"\" %INSTALLER% /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER\n")
             f.write("del /f /q %INSTALLER%\n")
+            f.write("timeout /t 3 /nobreak >nul\n")
             f.write("start \"\" %TARGET%\n")
             f.write("del /f /q \"%~f0\"\n")
 
