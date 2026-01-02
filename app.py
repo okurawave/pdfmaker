@@ -6,6 +6,7 @@ import tempfile
 import threading
 import tkinter as tk
 import zipfile
+import re
 from tkinter import filedialog, messagebox, ttk
 from urllib.request import Request, urlopen
 
@@ -21,9 +22,22 @@ import img2pdf
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
-APP_VERSION = "0.1.8"
+APP_VERSION = "0.1.9"
 UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
 UPDATE_ASSET_NAME = "pdfmaker-setup.exe"
+FULLWIDTH_TO_ASCII = str.maketrans("０１２３４５６７８９", "0123456789")
+
+
+def natural_sort_key(value: str) -> list:
+    normalized = value.translate(FULLWIDTH_TO_ASCII)
+    parts = re.split(r"(\d+)", normalized)
+    key = []
+    for part in parts:
+        if part.isdigit():
+            key.append(int(part))
+        else:
+            key.append(part.lower())
+    return key
 
 
 class App:
@@ -331,7 +345,7 @@ class App:
                         display_names.append(os.path.relpath(path, folder))
             if images:
                 images, display_names = zip(
-                    *sorted(zip(images, display_names), key=lambda t: t[1].lower())
+                    *sorted(zip(images, display_names), key=lambda t: natural_sort_key(t[1]))
                 )
         else:
             for name in entries:
@@ -341,7 +355,7 @@ class App:
                     display_names.append(name)
             if images:
                 images, display_names = zip(
-                    *sorted(zip(images, display_names), key=lambda t: t[1].lower())
+                    *sorted(zip(images, display_names), key=lambda t: natural_sort_key(t[1]))
                 )
 
         return list(images) if images else [], list(display_names) if display_names else []
