@@ -21,7 +21,7 @@ import img2pdf
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}
 A4_SIZE_PT = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.7"
 UPDATE_API_URL = "https://api.github.com/repos/okurawave/pdfmaker/releases/latest"
 UPDATE_ASSET_NAME = "pdfmaker-setup.exe"
 
@@ -148,6 +148,9 @@ class App:
         self.create_button.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         self.create_button.state(["disabled"])
         self.update_output_controls()
+
+        version_label = ttk.Label(container, text=f"v{APP_VERSION}", foreground="#666666")
+        version_label.grid(row=9, column=2, sticky="e", pady=(6, 0))
 
     def _setup_dnd(self) -> None:
         if not TkinterDnD or not DND_FILES:
@@ -550,8 +553,11 @@ class App:
         browse_button = ttk.Button(frame, text="Browse", command=self.select_fixed_output_folder)
         browse_button.grid(row=1, column=2, padx=(8, 0), pady=(8, 4))
 
+        update_button = ttk.Button(frame, text="Check for updates", command=self.check_updates_now)
+        update_button.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+
         save_button = ttk.Button(frame, text="Save", command=lambda: self.save_settings_and_close(dialog))
-        save_button.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        save_button.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0))
 
         dialog.transient(self.root)
         dialog.grab_set()
@@ -605,6 +611,32 @@ class App:
     def on_close(self) -> None:
         self._clear_temp_dir()
         self.root.destroy()
+
+    def check_updates_now(self) -> None:
+        self.progress.start(10)
+        self.status_text.set("Checking for updates...")
+        thread = threading.Thread(target=self._check_update_now_thread, daemon=True)
+        thread.start()
+
+    def _check_update_now_thread(self) -> None:
+        try:
+            latest = fetch_latest_release()
+            if not latest:
+                self.root.after(0, lambda: self._on_update_check_complete("Update information unavailable."))
+                return
+            latest_version = latest.get("tag_name", "").lstrip("v")
+            if is_version_newer(latest_version, APP_VERSION):
+                self.root.after(0, lambda: self._prompt_update(latest))
+            else:
+                self.root.after(0, lambda: self._on_update_check_complete("No updates available."))
+        except Exception as exc:
+            self.root.after(0, lambda: self._on_update_check_complete(f"Update check failed: {exc}"))
+
+    def _on_update_check_complete(self, message: str) -> None:
+        self.progress.stop()
+        self.progress_text.set("")
+        self.update_status()
+        messagebox.showinfo("Update", message)
 
 
 def fetch_latest_release() -> dict:
